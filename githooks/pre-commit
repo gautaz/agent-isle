@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-commit checks..."
+
+echo "==> source file size (500 line limit)"
+violations=$(find src -name '*.rs' -exec sh -c 'lines=$(wc -l < "$1"); [ "$lines" -gt 500 ] && echo "$1: $lines lines"' _ {} \;)
+if [ -n "$violations" ]; then
+    echo "Source files exceed 500-line limit:"
+    echo "$violations"
+    exit 1
+fi
+
+echo "==> cargo fmt --check"
+if ! cargo fmt --check; then
+    echo ""
+    echo "Fix by running: cargo fmt"
+    exit 1
+fi
+
+echo "==> cargo clippy"
+if ! cargo clippy -- -D warnings; then
+    exit 1
+fi
+
+echo "==> panache format --check (root)"
+if ! panache format --check *.md src; then
+    echo ""
+    echo "Fix by running: panache format *.md src"
+    exit 1
+fi
+
+echo "==> panache format --check (pandoc)"
+if ! panache format --check pandoc; then
+    echo ""
+    echo "Fix by running: panache format pandoc"
+    exit 1
+fi
+
+echo "==> lychee link check"
+if ! lychee --no-progress --exclude-loopback --exclude-path target --exclude-path result --exclude-path pandoc .; then
+    echo ""
+    echo "Fix broken links in documentation files."
+    exit 1
+fi
+
+echo "Pre-commit checks passed."

@@ -1,0 +1,33 @@
+# Scope
+
+::: {.readme}
+agent-isle provides:
+
+- **Filesystem sandboxing** via bubblewrap (bwrap) --- agents can only access explicitly allowed paths
+- **Secret detection** via betterleaks --- files containing secrets are masked with `/dev/null`
+- **Container proxying** via Podman --- intercepts container create requests to prevent secret leaks
+- **Agent flexibility** --- run opencode, aider, or any custom AI agent inside the same sandbox
+
+The sandbox is **fixed infrastructure** (not user-configurable).
+What changes is which agent runs inside it.
+
+## Security limitations
+
+The bubblewrap sandbox protects secrets by mounting `/dev/null` over files detected as containing secrets.
+This works well when modifying existing files, but has important limitations:
+
+- **New secret files**: betterleaks scans at startup only.
+  A new secret file created in a mounted directory **after** the sandbox started will not be detected, leaving its secrets exposed to the agent.
+- **Deleted and recreated files**: If a mounted secret file is deleted and recreated, the new inode is not masked and is readable from inside the sandbox.
+  This is because bind mounts are tied to specific inodes, not file paths (see [Shared Subtrees](https://docs.kernel.org/filesystems/sharedsubtree.html) and [VFS](https://docs.kernel.org/filesystems/vfs.html)).
+
+These limitations are inherent to the `/dev/null` masking approach.
+For maximum security, avoid exposing sensitive directories to the agent.
+:::
+
+::: {.agent}
+- Bubblewrap sandbox (filesystem isolation)
+- Betterleaks (secret detection, masks with /dev/null)
+- Podman proxy (blocks secret-leaking mounts)
+- Agent presets (opencode, or custom via config)
+:::

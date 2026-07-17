@@ -1,0 +1,27 @@
+# Session Setup
+
+::: {.agent}
+Before working on this project, you must load the development environment.
+This makes all required tools (`cargo`, `clippy`, `rustfmt`, `panache`, `lychee`, etc.) available in your PATH.
+
+Run this before any other command:
+
+```bash
+source scripts/ai-dev-env.sh
+```
+
+This is the only way to access the development tools.
+Do not run `nix` commands directly --- you do not have the permissions required.
+
+All development commands (`cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`, `panache format`) must be run after sourcing the environment script.
+If you start a new shell session during work, re-source the script.
+
+## Constraints
+
+- Always run `source scripts/ai-dev-env.sh` first.
+  Never skip this step.
+- Do not run `nix` commands directly.
+  They will fail.
+- Do not run `git` commands.
+- If `flake.nix` changes, ask the user to rebuild: `nix develop -c build-ai-dev-env`
+:::

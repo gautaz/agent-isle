@@ -1,0 +1,208 @@
+# Configuration
+
+::: {.readme}
+Configuration is optional when using `--agent` flag or symlinks.
+
+## Config file location
+
+agent-isle looks for a config file at:
+
+```
+${XDG_CONFIG_HOME:-~/.config}/agent-isle/config.yml
+```
+
+If found, it's loaded automatically.
+Override with `--config` flag:
+
+```bash
+agent-isle --config /path/to/config.yml -- --help
+```
+
+## Config merging order
+
+1. Built-in defaults --- base sandbox configuration
+2. Agent preset --- agent-specific defaults (mounts, env vars)
+3. User config file --- your customizations
+4. CLI flags --- final overrides
+
+## Template variables
+
+Template variables are expanded in string values (paths, env values, chdir):
+
+  | Variable        | Description               | Example                                       |
+  | --------------- | ------------------------- | --------------------------------------------- |
+  | `{home}`        | User home directory       | `/home/user`                                  |
+  | `{user}`        | Username                  | `user`                                        |
+  | `{cwd}`         | Current working directory | `/home/user/project`                          |
+  | `{xdg_runtime}` | XDG_RUNTIME_DIR           | `/run/user/1000`                              |
+  | `{xdg_state}`   | XDG_STATE_HOME            | `/home/user/.local/state`                     |
+  | `{log_path}`    | Path to current log file  | `/home/user/.local/state/agent-isle/logs/...` |
+
+Any unknown template variable causes an error at startup.
+:::
+
+## Config structure
+
+```yaml
+agent: "default agent to use"             # must match agents key or bundled preset
+chdir: "{cwd}"                            # working directory inside sandbox (default: "/")
+bwrap_path: "/usr/bin/bwrap"              # absolute path to bubblewrap binary
+betterleaks_path: "/usr/bin/betterleaks"  # absolute path to betterleaks binary
+path_secrets_policy: mask                 # secrets policy for PATH mounts (mask or show)
+mounts: []                                # appended to all agent presets
+env:                                      # merged with all agent presets (per-key overwrite)
+  STATIC_VAR: "value"
+  SECRET_VAR:
+    command: "shell command"              # command to retrieve the secret
+agents:
+  agent-name:
+    binary: "/absolute/path"
+    chdir: "/override"                    # optional, falls back to top-level chdir
+    mounts: []                            # appended to preset mounts
+    env: {}                               # merged with preset env (per-key overwrite)
+    lightweight_args: []                  # mandatory, empty = no lightweight mode
+tools:
+  podman:
+    enabled: true                         # nil = auto-detect
+    socket_path: "{xdg_runtime}/podman/podman.sock"
+```
+
+`lightweight_args` is **mandatory** for every agent --- missing key is a validation error.
+Empty list `[]` means no lightweight mode.
+
+## Merge behavior
+
+  | Field type       | Behavior                          |
+  | ---------------- | --------------------------------- |
+  | Lists (`mounts`) | **Appended** (never replaced)     |
+  | Maps (`env`)     | Merged per-key; override keys win |
+  | Scalars          | Replaced by override if non-empty |
+
+::: {.readme}
+## Configuration reference
+
+See [example-config.yml](./example-config.yml) for a complete documented example.
+
+### Top-level fields
+
+<!-- include:example-config.yml:top-level -->
+
+  | Field                 | Type                     | Default                         | Description                                                                                                          |
+  | --------------------- | ------------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+  | `agent`               | string                   | `""`                            | Default agent name. Must match a key in `agents` map or a bundled preset if non-empty.                               |
+  | `chdir`               | string                   | `"/"`                           | Working directory inside the sandbox. Supports template variables.                                                   |
+  | `bwrap_path`          | string                   | compile-time `BWRAP_PATH`       | Absolute path to bubblewrap binary.                                                                                  |
+  | `betterleaks_path`    | string                   | compile-time `BETTERLEAKS_PATH` | Absolute path to betterleaks binary.                                                                                 |
+  | `path_secrets_policy` | string                   | `"mask"`                        | Secrets policy for PATH-derived host directories. `"mask"` (scan for secrets) or `"show"` (expose without scanning). |
+  | `mounts`              | list[MountConfig]        | `[]`                            | Host mounts. Appended to all agent presets.                                                                          |
+  | `env`                 | map[string, EnvValue]    | `{}`                            | Environment variables. Merged with presets; per-key overwrite wins.                                                  |
+  | `agents`              | map[string, AgentConfig] | `{}`                            | Per-agent configuration blocks.                                                                                      |
+  | `tools`               | ToolsConfig              | `{}`                            | Tool configuration (e.g., Podman). Deep-merged per tool section.                                                     |
+
+#### `chdir`
+
+Working directory inside the sandbox.
+Defaults to `"/"` if unset.
+
+Supports template variables (e.g. `"{cwd}"`).
+
+**Current project access**: To give agents access to your current project, set `chdir: "{cwd}"` and mount `{cwd}` read-write:
+
+```yaml
+chdir: "{cwd}"
+mounts:
+  - path: "{cwd}"
+    mode: rw
+```
+
+#### Binary paths
+
+`bwrap_path` and `betterleaks_path` are set at compile time via `BWRAP_PATH` and `BETTERLEAKS_PATH` environment variables.
+Override in config to use different paths, or if compile-time defaults were not set (missing or empty).
+
+```yaml
+bwrap_path: /usr/bin/bwrap
+betterleaks_path: /usr/bin/betterleaks
+```
+
+#### `path_secrets_policy`
+
+Controls whether PATH-derived host directories (from the host's `$PATH`) are scanned for secrets.
+
+- `"mask"` (default) --- betterleaks scans each PATH directory for secrets.
+  Detected files get `/dev/null` bind mounts, hiding them from the agent.
+- `"show"` --- PATH directories are exposed without secret scanning.
+
+```yaml
+path_secrets_policy: mask
+```
+
+#### Mount options
+
+Each mount entry supports:
+
+  | Field            | Type    | Default  | Description                                                       |
+  | ---------------- | ------- | -------- | ----------------------------------------------------------------- |
+  | `path`           | string  | ---      | **Required.** Host path to mount. Supports template variables.    |
+  | `target`         | string? | `path`   | Target path inside sandbox. Defaults to `path` if omitted.        |
+  | `mode`           | string  | `"ro"`   | `"ro"` (read-only) or `"rw"` (read-write).                        |
+  | `secrets_policy` | string  | `"mask"` | `"mask"` (hide secrets) or `"show"` (expose to agent). See below. |
+
+##### `secrets_policy`
+
+Controls how secrets detection handles files in this mount:
+
+- `"mask"` (default) --- betterleaks scans this mount for secrets.
+  Detected files get `/dev/null` bind mounts, hiding them from the agent.
+- `"show"` --- secrets are visible to the agent.
+  Mount is skipped during scanning.
+
+**Warning**: `"show"` exposes any secrets in this mount to the AI agent.
+
+#### Environment variables
+
+Each env var entry supports two forms:
+
+**Static value**:
+
+```yaml
+MY_VAR: "some-value"
+```
+
+**Command execution** (stdout becomes the value):
+
+```yaml
+SECRET_VAR:
+  command: "pass show api/my-key"
+```
+
+Both forms support template variables (e.g. `command: "echo {home}/.config"`).
+
+#### Per-agent configuration
+
+<!-- include:example-config.yml:agents -->
+
+Each agent block supports:
+
+  | Field              | Type                  | Description                                                                           |
+  | ------------------ | --------------------- | ------------------------------------------------------------------------------------- |
+  | `binary`           | string                | **Required.** Absolute path to agent executable. Supports template variables.         |
+  | `chdir`            | string?               | Agent-specific working directory override. Falls back to top-level `chdir`.           |
+  | `mounts`           | list[MountConfig]     | Agent-specific mounts. **Appended** to preset and top-level mounts.                   |
+  | `env`              | map[string, EnvValue] | Agent-specific env vars. Merged with preset and top-level; per-key overwrite wins.    |
+  | `lightweight_args` | list[string]          | **Mandatory.** Flags that trigger lightweight mode. Empty `[]` = no lightweight mode. |
+
+`lightweight_args` is required for every agent.
+Missing key is a validation error at startup.
+
+#### Tools
+
+<!-- include:example-config.yml:tools -->
+
+##### Podman
+
+  | Field         | Type    | Default                              | Description                                                           |
+  | ------------- | ------- | ------------------------------------ | --------------------------------------------------------------------- |
+  | `enabled`     | bool?   | `null` (auto-detect)                 | `true` = force enable, `false` = force disable, `null` = auto-detect. |
+  | `socket_path` | string? | `"{xdg_runtime}/podman/podman.sock"` | Path to Podman socket. Supports template variables.                   |
+:::

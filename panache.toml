@@ -1,0 +1,5 @@
+flavor = "gfm"
+
+[format]
+line-ending = "lf"
+wrap = "sentence"
