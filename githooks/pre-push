@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-push checks..."
+
+echo "==> cargo test"
+if ! cargo test; then
+    exit 1
+fi
+
+echo "Pre-push checks passed."

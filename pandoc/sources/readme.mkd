@@ -1,0 +1,17 @@
+---
+title: agent-isle
+description: General containment environment for AI agents
+---
+
+# agent-isle
+
+General containment environment for AI agents.
+Wraps any CLI-based AI agent inside a bubblewrap sandbox with secret detection and tool proxying.
+
+<!-- include:pandoc/sources/themes/scope.mkd -->
+
+<!-- include:pandoc/sources/themes/installation.mkd -->
+
+<!-- include:pandoc/sources/themes/usage.mkd -->
+
+<!-- include:pandoc/sources/themes/configuration.mkd -->

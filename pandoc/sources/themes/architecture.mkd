@@ -1,0 +1,35 @@
+# Architecture
+
+## Project Structure
+
+```
+src/
+  main.rs                          Entry point, CLI flags, tracing init
+  config/mod.rs                    Config struct, serde YAML, merge, presets, validation
+  platform/mod.rs                  OSConfig trait (NixOS, Linux)
+  sandbox/mod.rs                   Bubblewrap argument builder
+  tools/mod.rs                     Podman socket proxy with secret interception
+  secrets/mod.rs                   Secret detection via betterleaks
+  util/mod.rs                      Helpers, XDG dirs, stale cleanup
+build.rs                           Compile-time warnings for missing tool paths
+flake.nix                          Nix build
+pandoc/
+  sources/                         Documentation source files
+  scripts/                         Pandoc Lua filters
+scripts/
+  build-docs.sh                    Documentation builder
+example-config.yml                 Config reference (used by docs)
+```
+
+## Containment layers
+
+- bubblewrap -- filesystem sandbox
+- betterleaks -- secret detection
+- Podman proxy -- blocks secret-leaking mounts
+- Lightweight mode: `--help`, `-h`, `--version`, `-v` skip full sandbox setup (minimal bwrap only, no betterleaks, no podman proxy)
+
+## Execution flow
+
+1. Parse CLI flags, load config (see `src/main.rs`)
+2. Detect platform, run betterleaks, start podman proxy
+3. Build bwrap args, launch sandboxed agent, forward signals

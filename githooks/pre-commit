@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-commit checks..."
+
+echo "==> cargo fmt --check"
+if ! cargo fmt --check; then
+    echo ""
+    echo "Fix by running: cargo fmt"
+    exit 1
+fi
+
+echo "==> cargo clippy"
+if ! cargo clippy -- -D warnings; then
+    exit 1
+fi
+
+echo "Pre-commit checks passed."

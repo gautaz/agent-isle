@@ -1,0 +1,100 @@
+# Configuration
+
+::: {.readme}
+Configuration is optional when using `--agent` flag or symlinks.
+
+## Config file location
+
+agent-isle looks for a config file at:
+
+```
+${XDG_CONFIG_HOME:-~/.config}/agent-isle/config.yml
+```
+
+If found, it's loaded automatically.
+Override with `--config` flag:
+
+```bash
+agent-isle --config /path/to/config.yml -- --help
+```
+
+## Config merging order
+
+1. Built-in defaults — base sandbox configuration
+2. Agent preset — agent-specific defaults (mounts, env vars)
+3. User config file — your customizations
+4. CLI flags — final overrides
+
+## Configuration reference
+
+See [example-config.yml](example-config.yml) for a documented configuration file.
+
+### Top-level fields
+
+<!-- include:example-config.yml:top-level -->
+
+### Per-agent configuration
+
+<!-- include:example-config.yml:agents -->
+
+### Tools
+
+<!-- include:example-config.yml:tools -->
+
+### Merge behavior
+
+Slices (mounts) are appended during merge.
+Maps (env vars) are overwritten per-key.
+Scalars (agent, binary) are replaced if non-empty.
+`tools.podman.enabled` is a `*bool` — nil means auto-detect, false means explicitly disabled.
+:::
+
+::: {.agent}
+## Config struct
+
+See `example-config.yml` for a documented config reference.
+
+```yaml
+agent: opencode
+ro_mounts: []                   # appended to all agent presets
+rw_mounts: []                   # appended to all agent presets
+env:                            # merged with all agent presets (per-key overwrite)
+  STATIC_VAR: "value"
+  SECRET_VAR:
+    command: "pass show secret/path"  # example using pass
+agents:
+  opencode:
+    binary: "opencode"
+    ro_mounts: []               # appended to preset mounts
+    rw_mounts: []               # appended to preset mounts
+    env: {}                     # merged with preset env (per-key overwrite)
+    lightweight_args:           # mandatory, empty = no lightweight mode
+      - "--help"
+      - "-h"
+      - "--version"
+      - "-v"
+tools:
+  podman:
+    enabled: true   # nil = auto-detect
+```
+
+Merge semantics: slices (mounts) append, maps (env vars) overwrite per-key, scalars replace if non-empty.
+`lightweight_args` is **mandatory** for every agent — missing key is a validation error.
+Empty list `[]` means no lightweight mode.
+`tools.podman.enabled` is `Option<bool>` — None = auto-detect, Some(false) = explicitly disabled.
+:::
+
+::: {.readme}
+## Template variables
+
+Template variables are expanded in string values:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{home}` | User home directory | `/home/user` |
+| `{user}` | Username | `user` |
+| `{cwd}` | Current working directory | `/home/user/project` |
+| `{xdg_runtime}` | XDG_RUNTIME_DIR | `/run/user/1000` |
+| `{xdg_state}` | XDG_STATE_HOME | `/home/user/.local/state` |
+| `{log_path}` | Path to current log file | `/home/user/.local/state/agent-isle/logs/...` |
+:::

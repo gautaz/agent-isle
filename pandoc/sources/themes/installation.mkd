@@ -1,0 +1,130 @@
+# Installation
+
+## NixOS
+
+All dependencies are handled automatically by Nix.
+
+### System-wide (configuration.nix)
+
+Add agent-isle as a flake input and configure it in your system:
+
+```nix
+{
+  inputs = {
+    # Your existing nixpkgs input
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    agent-isle.url = "github:gautaz/phoenix?dir=agent-isle";
+    agent-isle.inputs.nixpkgs.follows = nixpkgs;
+  };
+
+  outputs = { self, nixpkgs, agent-isle, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        {
+          environment.systemPackages = [ agent-isle.packages.x86_64-linux.default ];
+        }
+      ];
+    };
+  };
+}
+```
+
+### Per-user (Home Manager)
+
+Add to your Home Manager configuration:
+
+```nix
+{ inputs, ... }:
+
+{
+  home.packages = [
+    inputs.agent-isle.packages.x86_64-linux.default
+  ];
+}
+```
+
+Or build and install manually:
+
+```bash
+nix build
+cp ./result/bin/agent-isle ~/.local/bin/
+```
+
+> [!NOTE]
+> The Nix build has tool paths hardcoded via compile-time environment variables.
+
+### Configuring agent support
+
+By default, no agent binaries are bundled.
+Use `mkAgentIsle` to include agent support at compile time:
+
+```nix
+# In your flake
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    agent-isle.url = "github:gautaz/phoenix?dir=agent-isle";
+    agent-isle.inputs.nixpkgs.follows = nixpkgs;
+  };
+
+  outputs = { self, nixpkgs, agent-isle, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        {
+          environment.systemPackages = [
+            (agent-isle.packages.x86_64-linux.mkAgentIsle {
+              agents = {
+                opencode = pkgs.opencode;  # or your custom package
+              };
+              maskedAgents = [ "opencode" ];  # creates opencode → agent-isle symlink
+            })
+          ];
+        }
+      ];
+    };
+  };
+}
+```
+
+This sets `OPENCODE_PATH` at compile time, so the binary path is absolute and requires no runtime configuration.
+
+When `maskedAgents` is set, symlinks are created so running the agent name (e.g., `opencode`) invokes agent-isle with that agent.
+
+> [!NOTE]
+> When using `maskedAgents`, do not include the original agent package in system or user packages — it would conflict with the symlink.
+> The `agents` attribute provides the binary path at compile time only.
+
+## Generic Linux
+
+Requires Rust 1.80+ and the following tools:
+
+| Tool | Purpose |
+|------|---------|
+| [bubblewrap](https://github.com/containers/bubblewrap) | Filesystem sandbox |
+| [betterleaks](https://github.com/gopasspw/betterleaks) | Secret detection |
+
+Install with Cargo:
+
+```bash
+cargo install --path .
+```
+
+Or build and copy manually:
+
+```bash
+cargo build --release
+cp target/release/agent-isle ~/.local/bin/
+```
+
+> [!NOTE]
+> The Cargo-built binary expects tools in `$PATH` or configured in `config.yml`.
+
+## Post-install verification
+
+```bash
+agent-isle --help
+```
+
+This should display the help message with available flags.

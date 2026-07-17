@@ -1,0 +1,13 @@
+# agent-isle agent reference
+
+<!-- include:pandoc/sources/themes/scope.mkd -->
+
+<!-- include:pandoc/sources/themes/usage.mkd -->
+
+<!-- include:pandoc/sources/themes/configuration.mkd -->
+
+<!-- include:pandoc/sources/themes/architecture.mkd -->
+
+<!-- include:pandoc/sources/themes/development.mkd -->
+
+<!-- include:pandoc/sources/themes/conventions.mkd -->

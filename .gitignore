@@ -1,0 +1,8 @@
+# Rust build output
+target/
+
+# Nix build output
+result
+
+# Coverage reports
+lcov.info

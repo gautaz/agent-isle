@@ -1,0 +1,70 @@
+# Usage
+
+```bash
+agent-isle [flags] [-- <args forwarded to agent>]
+```
+
+## Examples
+
+```bash
+# Run a specific agent
+agent-isle --agent opencode -- --help
+
+# Run a specific agent
+agent-isle --agent aider -- --version
+
+# Dry run (print bwrap args without executing)
+agent-isle --agent opencode --dry-run -- --help
+```
+
+## Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` | `-a` | Agent name (selects preset) | — |
+| `--config` | `-c` | Config file path | `${XDG_CONFIG_HOME:-~/.config}/agent-isle/config.yml` |
+| `--dry-run` | — | Print bwrap args without executing | `false` |
+
+When invoked as `agent-isle`, `--agent` is required (unless set in config or via symlink).
+
+Arguments after `--` are forwarded to the agent.
+
+## Agent Selection
+
+Agent selection is resolved in this order:
+
+1. **Symlink** — executable name is used as agent name
+2. **`--agent` flag** — explicit CLI selection (only when invoked as `agent-isle`)
+3. **Config file** — `agent:` field in config.yml
+
+If no agent is resolved, agent-isle exits with an error.
+
+### Bundled presets
+
+- **opencode** — [opencode](https://github.com/opencode-ai/opencode) AI coding assistant
+
+## Logs
+
+Logs are written to:
+
+```
+${XDG_STATE_HOME:-~/.local/state}/agent-isle/logs/<timestamp>_<pid>.log
+```
+
+The log path is available in config via the `{log_path}` template variable.
+
+## License
+
+See [LICENSE](LICENSE) for details.
+
+::: {.agent}
+## Symlinks
+
+```bash
+ln -s agent-isle opencode
+./opencode --help  # no -- needed
+```
+
+Executable name selects the agent.
+When using symlinks, all arguments go directly to the agent (no flag parsing).
+:::

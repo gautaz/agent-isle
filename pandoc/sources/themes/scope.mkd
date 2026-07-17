@@ -1,0 +1,20 @@
+# Scope
+
+::: {.readme}
+agent-isle provides:
+
+- **Filesystem sandboxing** via bubblewrap (bwrap) — agents can only access explicitly allowed paths
+- **Secret detection** via betterleaks — files containing secrets are masked with `/dev/null`
+- **Container proxying** via Podman — intercepts container create requests to prevent secret leaks
+- **Agent flexibility** — run opencode, aider, or any custom AI agent inside the same sandbox
+
+The sandbox is **fixed infrastructure** (not user-configurable).
+What changes is which agent runs inside it.
+:::
+
+::: {.agent}
+- Bubblewrap sandbox (filesystem isolation)
+- Betterleaks (secret detection, masks with /dev/null)
+- Podman proxy (blocks secret-leaking mounts)
+- Agent presets (opencode, or custom via config)
+:::

@@ -1,0 +1,78 @@
+# Conventions
+
+::: {.contributing}
+## Extension points
+
+1. Agent presets (`src/config/mod.rs` — `PRESETS` HashMap)
+2. Platform (`src/platform/mod.rs`)
+3. Tools (`src/tools/mod.rs`)
+
+## Adding OS support
+
+Create a new struct implementing `OSConfig` trait in `src/platform/mod.rs`.
+Add detection in the `detect()` function.
+Currently only Linux is supported (NixOS and generic).
+
+## Code conventions
+
+- No globals — pass deps explicitly (exception: compile-time paths via `option_env!()`)
+- `anyhow::Result` for error handling
+- `serde` for YAML/JSON serialization
+- `tracing` for structured logging
+- rustfmt formatting
+- clippy linting
+- Table-driven tests
+- Mandatory `fsync` before log close
+- All external tool paths must be absolute (prevents PATH injection attacks)
+- Tool paths use compile-time defaults via `option_env!()`, overridable in config YAML
+:::
+
+## Updating documentation
+
+**Do not edit `AGENT.md`, `README.md`, or `CONTRIBUTING.md` directly.**
+All are generated from theme files.
+Always edit the relevant theme file in `pandoc/sources/themes/`, then rebuild.
+
+With Nix:
+
+```bash
+nix develop -c scripts/build-docs.sh
+```
+
+Without Nix:
+
+```bash
+source scripts/ai-dev-env.sh
+scripts/build-docs.sh
+```
+
+Theme files use pandoc syntax with audience markers:
+
+```markdown
+::: {.readme}
+This content appears only in README.md
+:::
+
+::: {.agent}
+This content appears only in AGENT.md
+:::
+
+::: {.contributing}
+This content appears only in CONTRIBUTING.md
+:::
+
+::: {.agent .contributing}
+This content appears in AGENT.md and CONTRIBUTING.md
+:::
+
+This content appears in all files
+```
+
+::: {.agent}
+## AI development constraints
+
+- Do not run `nix` commands
+- The off-the-shelf AI development environment is Nix specific.
+  On non-nix platforms, the user must ensure the AI has access to the required tools (see "Development dependencies").
+- If `flake.nix` changes, ask the user to rebuild: `nix develop -c build-ai-dev-env`
+:::
