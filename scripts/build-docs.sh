@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build README.md, AGENT.md, and CONTRIBUTING.md from theme files
+# Build README.md, AGENTS.md, and CONTRIBUTING.md from theme files
 #
 # Usage:
 #   ./build-docs.sh
@@ -13,7 +13,7 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 SOURCES="$ROOT_DIR/pandoc/sources"
 PANDOC_SCRIPTS="$ROOT_DIR/pandoc/scripts"
 README="$ROOT_DIR/README.md"
-AGENT="$ROOT_DIR/AGENT.md"
+AGENT="$ROOT_DIR/AGENTS.md"
 CONTRIBUTING="$ROOT_DIR/CONTRIBUTING.md"
 
 if ! command -v pandoc &>/dev/null; then
@@ -53,7 +53,7 @@ build_doc() {
 }
 
 build_doc "$SOURCES/readme.mkd"       "$README"       readme
-build_doc "$SOURCES/agent.mkd"        "$AGENT"        agent
+build_doc "$SOURCES/agents.mkd"       "$AGENT"        agent
 build_doc "$SOURCES/contributing.mkd" "$CONTRIBUTING" contributing
 
 echo "Generated:"

@@ -1,13 +1,13 @@
 -- Pandoc Lua filter for audience-based content filtering
--- Used to generate README.md, AGENT.md, and CONTRIBUTING.md from a single source
+-- Used to generate README.md, AGENTS.md, and CONTRIBUTING.md from a single source
 --
 -- Usage:
 --   pandoc --metadata=audience:readme source.mkd -o README.md
---   pandoc --metadata=audience:agent source.mkd -o AGENT.md
+--   pandoc --metadata=audience:agent source.mkd -o AGENTS.md
 --   pandoc --metadata=audience:contributing source.mkd -o CONTRIBUTING.md
 --
 -- Content in ::: {.readme} blocks appears only in README.md.
--- Content in ::: {.agent} blocks appears only in AGENT.md.
+-- Content in ::: {.agent} blocks appears only in AGENTS.md.
 -- Content in ::: {.contributing} blocks appears only in CONTRIBUTING.md.
 -- Content without audience classes appears in all outputs.
 

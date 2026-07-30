@@ -1,132 +1,76 @@
-# agent-isle contributing
+# agent-isle agent reference
 
-## Development
+## Session Setup
 
-### Development dependencies
+Before working on this project, you must load the development environment.
+This makes all required tools (`cargo`, `clippy`, `rustfmt`, `panache`, `lychee`, etc.) available in your PATH.
 
-With Nix, enter the dev shell to get all tools:
-
-```bash
-nix develop
-```
-
-Without Nix, install these tools manually:
-
-  | Tool                                                        | Purpose                        |
-  | ----------------------------------------------------------- | ------------------------------ |
-  | [Rust](https://rustup.rs/) 1.80+                            | Compiler                       |
-  | [clippy](https://doc.rust-lang.org/clippy/)                 | Linting                        |
-  | [rustfmt](https://github.com/rust-lang/rustfmt)             | Formatting                     |
-  | [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) | Coverage                       |
-  | [pandoc](https://pandoc.org/installing.html)                | Documentation generation       |
-  | [panache](https://panache.bz)                               | Markdown formatting/linting    |
-  | [lychee](https://github.com/lycheeverse/lychee)             | Link checking                  |
-  | [bubblewrap](https://github.com/containers/bubblewrap)      | Sandbox (for testing)          |
-  | [betterleaks](https://github.com/betterleaks/betterleaks)   | Secret detection (for testing) |
-
-### Development build
+Run this before any other command:
 
 ```bash
-cargo build
+source scripts/ai-dev-env.sh
 ```
 
-### Running tests
+This is the only way to access the development tools.
+Do not run `nix` commands directly — you do not have the permissions required.
 
-```bash
-cargo test
+All development commands (`cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`, `panache format`) must be run after sourcing the environment script.
+If you start a new shell session during work, re-source the script.
+
+### Constraints
+
+- Always run `source scripts/ai-dev-env.sh` first.
+  Never skip this step.
+- Do not run `nix` commands directly.
+  They will fail.
+- Do not run `git` commands.
+- If `flake.nix` changes, ask the user to rebuild: `nix develop -c build-ai-dev-env`
+
+## Scope
+
+- Bubblewrap sandbox (filesystem isolation)
+- Betterleaks (secret detection, masks with /dev/null)
+- Podman proxy (blocks secret-leaking mounts)
+- Agent presets (opencode, or custom via config)
+
+## Configuration
+
+### Config structure
+
+```yaml
+agent: "default agent to use"             # must match agents key or bundled preset
+chdir: "{cwd}"                            # working directory inside sandbox (default: "/")
+bwrap_path: "/usr/bin/bwrap"              # absolute path to bubblewrap binary
+betterleaks_path: "/usr/bin/betterleaks"  # absolute path to betterleaks binary
+path_secrets_policy: mask                 # secrets policy for PATH mounts (mask or show)
+mounts: []                                # appended to all agent presets
+env:                                      # merged with all agent presets (per-key overwrite)
+  STATIC_VAR: "value"
+  SECRET_VAR:
+    command: "shell command"              # command to retrieve the secret
+agents:
+  agent-name:
+    binary: "/absolute/path"
+    chdir: "/override"                    # optional, falls back to top-level chdir
+    mounts: []                            # appended to preset mounts
+    env: {}                               # merged with preset env (per-key overwrite)
+    lightweight_args: []                  # mandatory, empty = no lightweight mode
+tools:
+  podman:
+    enabled: true                         # nil = auto-detect
+    socket_path: "{xdg_runtime}/podman/podman.sock"
 ```
 
-### Linting
+`lightweight_args` is **mandatory** for every agent — missing key is a validation error.
+Empty list `[]` means no lightweight mode.
 
-```bash
-cargo clippy
-cargo fmt --check
-panache format --check .
-```
+### Merge behavior
 
-### Git hooks
-
-Git hooks enforce formatting, linting, and tests automatically.
-
-  | Hook         | When               | Checks                                                                      |
-  | ------------ | ------------------ | --------------------------------------------------------------------------- |
-  | `pre-commit` | Before each commit | `cargo fmt --check`, `cargo clippy`, `panache format --check .`, `lychee .` |
-  | `pre-push`   | Before each push   | `cargo test`                                                                |
-
-With Nix, hooks are configured automatically when entering the dev shell.
-
-Without Nix, run the setup script once:
-
-```bash
-scripts/setup-githooks.sh
-```
-
-### Coverage
-
-Text summary:
-
-```bash
-cargo llvm-cov
-```
-
-HTML report:
-
-```bash
-cargo llvm-cov --html
-```
-
-LCOV output (for CI or visualization tools):
-
-```bash
-cargo llvm-cov --lcov --output-path lcov.info
-```
-
-With Nix, `LLVM_COV` and `LLVM_PROFDATA` are set automatically in the dev shell.
-Without Nix, set them manually if `llvm-tools-preview` is not installed via rustup:
-
-```bash
-export LLVM_COV=$(which llvm-cov)
-export LLVM_PROFDATA=$(which llvm-profdata)
-```
-
-### Adding a new agent preset
-
-Edit `src/config/presets.rs`:
-
-1. Add a new entry to the `PRESETS` HashMap with the agent’s configuration
-
-`Preset` fields:
-
-  | Field              | Type                                   | Description                                                                             |
-  | ------------------ | -------------------------------------- | --------------------------------------------------------------------------------------- |
-  | `binary`           | `&'static str`                         | Agent executable path (set at compile time)                                             |
-  | `mounts`           | `&'static [(&'static str, MountMode)]` | Bind mounts for this agent as `(path, mode)` tuples                                     |
-  | `env`              | `&'static [(&str, &str)]`              | Environment variables as `(name, value)` tuples                                         |
-  | `lightweight_args` | `&'static [&'static str]`              | Agent flags that trigger lightweight mode (mandatory, empty `[]` = no lightweight mode) |
-
-The binary path is set at compile time via environment variables (e.g., `OPENCODE_PATH`).
-Users can override it in config YAML.
-All external tool paths must be absolute to prevent PATH injection attacks.
-
-Example:
-
-```rust
-    m.insert(
-        "opencode",
-        Preset {
-            binary: OPENCODE_DEFAULT_PATH,
-            mounts: &[
-                ("{home}/.config/opencode", MountMode::Ro),
-                ("{home}/.local/share/opencode", MountMode::Rw),
-                ("{home}/.local/state/opencode", MountMode::Rw),
-            ],
-            env: &[],
-            lightweight_args: &["--help", "-h", "--version", "-v"],
-        },
-    );
-```
-
-Template variables (`{home}`, `{cwd}`, etc.) are expanded at runtime.
+  | Field type       | Behavior                          |
+  | ---------------- | --------------------------------- |
+  | Lists (`mounts`) | **Appended** (never replaced)     |
+  | Maps (`env`)     | Merged per-key; override keys win |
+  | Scalars          | Replaced by override if non-empty |
 
 ## Architecture
 
@@ -270,45 +214,94 @@ Secret detection is mount-aware via `SecretsPolicy`:
 8. Append masking mounts, build bwrap args, launch sandboxed agent
 9. Shut down active tools, clean up run directory, sync logs
 
+## Development
+
+### Commands
+
+```bash
+cargo build                            # development build
+cargo test                             # test
+cargo clippy                           # lint
+cargo fmt                              # format
+panache format .                       # format markdown
+```
+
+`bwrap_path` and `betterleaks_path` are set via compile-time environment variables (`BWRAP_PATH`, `BETTERLEAKS_PATH`) or configured in `config.yml`.
+
+### Running tests
+
+```bash
+cargo test
+```
+
+### Linting
+
+```bash
+cargo clippy
+cargo fmt --check
+panache format --check .
+```
+
+### Git hooks
+
+Git hooks enforce formatting, linting, and tests automatically.
+
+  | Hook         | When               | Checks                                                                      |
+  | ------------ | ------------------ | --------------------------------------------------------------------------- |
+  | `pre-commit` | Before each commit | `cargo fmt --check`, `cargo clippy`, `panache format --check .`, `lychee .` |
+  | `pre-push`   | Before each push   | `cargo test`                                                                |
+
+Run the setup script once:
+
+```bash
+scripts/setup-githooks.sh
+```
+
+### Adding a new agent preset
+
+Edit `src/config/presets.rs`:
+
+1. Add a new entry to the `PRESETS` HashMap with the agent’s configuration
+
+`Preset` fields:
+
+  | Field              | Type                                   | Description                                                                             |
+  | ------------------ | -------------------------------------- | --------------------------------------------------------------------------------------- |
+  | `binary`           | `&'static str`                         | Agent executable path (set at compile time)                                             |
+  | `mounts`           | `&'static [(&'static str, MountMode)]` | Bind mounts for this agent as `(path, mode)` tuples                                     |
+  | `env`              | `&'static [(&str, &str)]`              | Environment variables as `(name, value)` tuples                                         |
+  | `lightweight_args` | `&'static [&'static str]`              | Agent flags that trigger lightweight mode (mandatory, empty `[]` = no lightweight mode) |
+
+The binary path is set at compile time via environment variables (e.g., `OPENCODE_PATH`).
+Users can override it in config YAML.
+All external tool paths must be absolute to prevent PATH injection attacks.
+
+Example:
+
+```rust
+    m.insert(
+        "opencode",
+        Preset {
+            binary: OPENCODE_DEFAULT_PATH,
+            mounts: &[
+                ("{home}/.config/opencode", MountMode::Ro),
+                ("{home}/.local/share/opencode", MountMode::Rw),
+                ("{home}/.local/state/opencode", MountMode::Rw),
+            ],
+            env: &[],
+            lightweight_args: &["--help", "-h", "--version", "-v"],
+        },
+    );
+```
+
+Template variables (`{home}`, `{cwd}`, etc.) are expanded at runtime.
+
 ## Conventions
-
-### Extension points
-
-1. Agent presets (`src/config/mod.rs` — `PRESETS` HashMap)
-2. Platform (`src/platform/mod.rs`)
-3. Tools (`src/tools/mod.rs`)
-
-### Adding OS support
-
-Create a new struct implementing `OSConfig` trait in `src/platform/mod.rs`.
-Add detection in the `detect()` function.
-Currently only Linux is supported (NixOS and generic).
-
-### Code conventions
-
-- No globals — pass deps explicitly (exception: compile-time paths via `option_env!()`)
-- `anyhow::Result` for error handling
-- `serde` for YAML/JSON serialization
-- `tracing` for structured logging
-- rustfmt formatting
-- clippy linting
-- Table-driven tests
-- Mandatory `fsync` before log close
-- All external tool paths must be absolute (prevents PATH injection attacks)
-- Binary paths use compile-time defaults via `option_env!()`, overridable in config YAML
 
 ### Updating documentation
 
 **Do not edit `AGENTS.md`, `README.md`, or `CONTRIBUTING.md` directly.** All are generated from theme files.
 Always edit the relevant theme file in `pandoc/sources/themes/`, then rebuild.
-
-With Nix:
-
-```bash
-nix develop -c scripts/build-docs.sh
-```
-
-Without Nix:
 
 ```bash
 source scripts/ai-dev-env.sh
