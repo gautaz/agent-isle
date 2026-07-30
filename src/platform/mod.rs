@@ -17,7 +17,7 @@ pub trait OSConfig: Send + Sync {
     /// Minimal read-only mounts for lightweight operations (--help, --version).
     fn minimal_ro_mounts(&self) -> Vec<String>;
 
-    /// Shared Linux mounts (DNS, dynamic linker). Override to customize.
+    /// Shared Linux mounts (DNS, dynamic linker, CA certs). Override to customize.
     fn base_mounts(&self) -> Vec<Mount> {
         vec![
             Mount::ro("/etc/passwd", "/etc/passwd").secrets_policy(SecretsPolicy::Show),
@@ -26,6 +26,7 @@ pub trait OSConfig: Send + Sync {
             Mount::ro("/etc/nsswitch.conf", "/etc/nsswitch.conf")
                 .secrets_policy(SecretsPolicy::Show),
             Mount::ro("/etc/resolv.conf", "/etc/resolv.conf").secrets_policy(SecretsPolicy::Show),
+            Mount::ro("/etc/ssl/certs", "/etc/ssl/certs").secrets_policy(SecretsPolicy::Show),
             Mount::ro("/lib64", "/lib64").secrets_policy(SecretsPolicy::Show),
         ]
     }
@@ -87,7 +88,11 @@ impl OSConfig for NixOS {
     }
 
     fn platform_env(&self) -> HashMap<String, String> {
-        HashMap::new()
+        let mut env = HashMap::new();
+        if let Ok(val) = std::env::var("SSL_CERT_FILE") {
+            env.insert("SSL_CERT_FILE".to_string(), val);
+        }
+        env
     }
 
     fn minimal_ro_mounts(&self) -> Vec<String> {
