@@ -88,27 +88,31 @@ fn bidirectional_proxy(
     client_conn: &mut UnixStream,
     real_conn: &mut UnixStream,
 ) -> Result<(), &'static str> {
+    use std::net::Shutdown;
+
     let client_clone = client_conn
         .try_clone()
         .map_err(|_| "failed to clone client connection")?;
     let real_clone = real_conn
         .try_clone()
         .map_err(|_| "failed to clone real connection")?;
+    let t1 = thread::spawn(move || {
+        if io::copy(&mut &client_clone, &mut &real_clone).is_err() {
+            tracing::warn!("proxy: client-to-real copy failed");
+        }
+        let _ = real_clone.shutdown(Shutdown::Write);
+    });
     let client_clone2 = client_conn
         .try_clone()
         .map_err(|_| "failed to clone client connection")?;
     let real_clone2 = real_conn
         .try_clone()
         .map_err(|_| "failed to clone real connection")?;
-    let t1 = thread::spawn(move || {
-        if io::copy(&mut &client_clone, &mut &real_clone).is_err() {
-            tracing::warn!("proxy: client-to-real copy failed");
-        }
-    });
     let t2 = thread::spawn(move || {
         if io::copy(&mut &real_clone2, &mut &client_clone2).is_err() {
             tracing::warn!("proxy: real-to-client copy failed");
         }
+        let _ = client_clone2.shutdown(Shutdown::Write);
     });
     if t1.join().is_err() {
         tracing::warn!("proxy: client-to-real thread panicked");
