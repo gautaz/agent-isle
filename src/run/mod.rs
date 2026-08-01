@@ -103,10 +103,15 @@ fn collect_sources<'a>(
 fn start_tools(
     compiled_tools: &mut [Box<dyn tools::Tool>],
     secret_files: &[String],
+    sandbox_mounts: &[sandbox::Mount],
 ) -> Result<Vec<ShutdownHook>, i32> {
+    let ctx = tools::ToolStartContext {
+        secret_files: secret_files.to_vec(),
+        sandbox_mounts: sandbox_mounts.to_vec(),
+    };
     let mut shutdown_hooks: Vec<(usize, Box<dyn FnOnce()>)> = Vec::new();
     for (i, tool) in compiled_tools.iter_mut().enumerate() {
-        match tool.start(secret_files) {
+        match tool.start(&ctx) {
             Ok(Some(hook)) => {
                 shutdown_hooks.push((i, hook));
             }
@@ -160,7 +165,7 @@ pub(crate) fn run(
         count = secret_files.len(),
         "secret files detected in mounts"
     );
-    let shutdown_hooks = match start_tools(&mut compiled_tools, &secret_files) {
+    let shutdown_hooks = match start_tools(&mut compiled_tools, &secret_files, &sources_mounts) {
         Ok(hooks) => hooks,
         Err(code) => return code,
     };

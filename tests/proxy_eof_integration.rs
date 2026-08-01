@@ -81,6 +81,7 @@ fn test_streaming_response_propagates_eof() {
         listen_path.to_str().unwrap(),
         backend_path.to_str().unwrap(),
         vec![],
+        vec![],
     )
     .unwrap();
 
@@ -124,6 +125,7 @@ fn test_keepalive_connection_allows_followup_request() {
     let stop = start_proxy(
         listen_path.to_str().unwrap(),
         backend_path.to_str().unwrap(),
+        vec![],
         vec![],
     )
     .unwrap();

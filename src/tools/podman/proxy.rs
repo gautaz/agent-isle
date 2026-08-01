@@ -1,4 +1,6 @@
-use std::io::{self, Write};
+use std::io;
+use std::io::Write;
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::Arc;
@@ -9,140 +11,109 @@ use anyhow::{Context, Result};
 use super::http::*;
 use super::parse::*;
 use super::secret_detection::*;
+use super::transport::*;
 use super::types::*;
 
-fn write_response(conn: &mut UnixStream, status: u16, msg: &str) {
-    let body = serde_json::json!({"message": msg}).to_string();
-    let response = format!(
-        "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        match status {
-            403 => "Forbidden",
-            502 => "Bad Gateway",
-            _ => "Unknown",
-        },
-        body.len()
-    );
-    if conn.write_all(response.as_bytes()).is_err() || conn.flush().is_err() {
-        tracing::warn!("proxy: failed to write response to client");
+/// Validate a single container mount source against the sandbox policy.
+/// Returns a human-readable reason when the mount must be rejected.
+///
+/// The sandbox-membership check runs before secret detection so an
+/// outside-sandbox path that merely happens to contain a secret file is
+/// reported for the actual violation (not a confusing secret message).
+fn check_mount_source(
+    source: &str,
+    read_only: bool,
+    secrets: &[String],
+    allowed: &[SandboxMount],
+) -> Option<String> {
+    let clean = canonical(source);
+    match authorized_by_sandbox(&clean, allowed) {
+        None => return Some(format!("{clean}: outside the sandbox mounts")),
+        Some(true) if !read_only => return Some(format!("{clean}: sandbox mount is read-only")),
+        _ => {}
     }
+    if contains_secret(&clean, secrets) {
+        return Some(format!("{clean}: is or contains a secret file"));
+    }
+    if !exists(source) {
+        return Some(format!("{clean}: host path does not exist"));
+    }
+    None
 }
 
-fn validate_create_secrets(
+fn validate_create_mounts(
     method: &str,
     path: &str,
     body: &[u8],
     secrets: &[String],
+    allowed: &[SandboxMount],
 ) -> Option<String> {
     if !is_create_op(method, path) {
         return None;
     }
-    let cfg = serde_json::from_slice::<CreateConfig>(body).ok()?;
-    let host = cfg.host_config.as_ref()?;
-    let mut all_secrets = find_secret_binds(&host.binds, secrets);
-    all_secrets.extend(find_secret_mounts(&host.mounts, secrets));
-    if all_secrets.is_empty() {
+    let cfg = serde_json::from_slice::<CreateRequest>(body).ok()?;
+    let mut violations: Vec<String> = Vec::new();
+    if let Some(host) = &cfg.host_config {
+        for bind in &host.binds {
+            if let Some((source, read_only)) = parse_bind_spec(bind) {
+                if let Some(reason) = check_mount_source(&source, read_only, secrets, allowed) {
+                    violations.push(reason);
+                }
+            }
+        }
+        for mount in &host.mounts {
+            if mount.mount_type == "bind" && !mount.source.is_empty() {
+                let read_only = mount.read_only.unwrap_or(false);
+                if let Some(reason) = check_mount_source(&mount.source, read_only, secrets, allowed)
+                {
+                    violations.push(reason);
+                }
+            }
+        }
+    }
+    for mount in &cfg.mounts {
+        if mount.mount_type == "bind" && !mount.source.is_empty() {
+            let read_only = mount.options.iter().any(|o| o.eq_ignore_ascii_case("ro"));
+            if let Some(reason) = check_mount_source(&mount.source, read_only, secrets, allowed) {
+                violations.push(reason);
+            }
+        }
+    }
+    if violations.is_empty() {
         None
     } else {
-        Some(all_secrets.join(", "))
+        Some(violations.join(", "))
     }
 }
 
-fn forward_request(
-    real_path: &str,
-    method: &str,
-    path: &str,
-    raw_headers: &[(String, Vec<u8>)],
-    content_length: usize,
-    is_chunked: bool,
-    body: &[u8],
-) -> Result<UnixStream, &'static str> {
-    let mut forward = format!("{method} {path} HTTP/1.1\r\n");
-    forward.push_str(&format!("Content-Length: {content_length}\r\n"));
-    if is_chunked {
-        forward.push_str("Transfer-Encoding: chunked\r\n");
-    }
-    for (name, value) in raw_headers {
-        if name.eq_ignore_ascii_case("Content-Length")
-            || name.eq_ignore_ascii_case("Transfer-Encoding")
-        {
-            continue;
-        }
-        forward.push_str(name);
-        forward.push_str(": ");
-        forward.push_str(std::str::from_utf8(value).unwrap_or(""));
-        forward.push_str("\r\n");
-    }
-    forward.push_str("\r\n");
-    let mut real_conn = UnixStream::connect(real_path)
-        .map_err(|_e| -> &'static str { "cannot connect to podman" })?;
-    if real_conn.write_all(forward.as_bytes()).is_err() {
-        tracing::warn!("proxy: failed to forward request headers");
-    }
-    if !body.is_empty() && real_conn.write_all(body).is_err() {
-        tracing::warn!("proxy: failed to forward request body");
-    }
-    Ok(real_conn)
-}
-
-fn bidirectional_proxy(
-    client_conn: &mut UnixStream,
-    real_conn: &mut UnixStream,
-) -> Result<(), &'static str> {
-    use std::net::Shutdown;
-
-    let client_clone = client_conn
-        .try_clone()
-        .map_err(|_| "failed to clone client connection")?;
-    let real_clone = real_conn
-        .try_clone()
-        .map_err(|_| "failed to clone real connection")?;
-    let t1 = thread::spawn(move || {
-        if io::copy(&mut &client_clone, &mut &real_clone).is_err() {
-            tracing::warn!("proxy: client-to-real copy failed");
-        }
-        let _ = real_clone.shutdown(Shutdown::Write);
-    });
-    let client_clone2 = client_conn
-        .try_clone()
-        .map_err(|_| "failed to clone client connection")?;
-    let real_clone2 = real_conn
-        .try_clone()
-        .map_err(|_| "failed to clone real connection")?;
-    let t2 = thread::spawn(move || {
-        if io::copy(&mut &real_clone2, &mut &client_clone2).is_err() {
-            tracing::warn!("proxy: real-to-client copy failed");
-        }
-        let _ = client_clone2.shutdown(Shutdown::Write);
-    });
-    if t1.join().is_err() {
-        tracing::warn!("proxy: client-to-real thread panicked");
-    }
-    if t2.join().is_err() {
-        tracing::warn!("proxy: real-to-client thread panicked");
-    }
-    Ok(())
-}
-
-fn check_secrets_blocking(
+fn check_mount_blocking(
     client_conn: &mut UnixStream,
     method: &str,
     path: &str,
     body: &[u8],
     secrets: &[String],
+    allowed: &[SandboxMount],
 ) -> bool {
-    if let Some(paths) = validate_create_secrets(method, path, body, secrets) {
-        tracing::warn!(paths = %paths, "proxy: blocked container create with secret paths");
+    if let Some(reasons) = validate_create_mounts(method, path, body, secrets, allowed) {
+        tracing::warn!(reasons = %reasons, "proxy: blocked container create with unauthorized mounts");
         write_response(
             client_conn,
             403,
-            &format!("mount sources contain secret paths: {paths}"),
+            &format!("container mounts violate sandbox policy: {reasons}"),
         );
         return true;
     }
     false
 }
 
-fn proxy_handle(mut client_conn: UnixStream, real_path: &str, secrets: &[String]) {
+fn proxy_handle(
+    mut client_conn: UnixStream,
+    real_path: &str,
+    secrets: &[String],
+    allowed: &[SandboxMount],
+) {
+    // Initialise the real-side connection with the first request, so that a
+    // validation error or connect failure is reported before any streaming.
     let (_buf, parsed, body) = match parse_request(&mut client_conn) {
         Ok(v) => v,
         Err(msg) => {
@@ -152,12 +123,13 @@ fn proxy_handle(mut client_conn: UnixStream, real_path: &str, secrets: &[String]
         }
     };
 
-    if check_secrets_blocking(
+    if check_mount_blocking(
         &mut client_conn,
         &parsed.method,
         &parsed.path,
         &body,
         secrets,
+        allowed,
     ) {
         return;
     }
@@ -179,18 +151,90 @@ fn proxy_handle(mut client_conn: UnixStream, real_path: &str, secrets: &[String]
         }
     };
 
-    if bidirectional_proxy(&mut client_conn, &mut real_conn).is_err() {
-        tracing::error!("proxy: bidirectional proxy failed");
-        write_response(&mut client_conn, 502, "proxy setup failed");
+    stream_requests(&mut client_conn, &mut real_conn, secrets, allowed);
+}
+
+/// Write a parsed request onto an existing connection to the real socket.
+fn forward_on(real_conn: &mut UnixStream, parsed: &ParsedRequest, body: &[u8]) -> bool {
+    let bytes = build_request_bytes(
+        &parsed.method,
+        &parsed.path,
+        &parsed.raw_headers,
+        parsed.content_length,
+        parsed.is_chunked,
+        body,
+    );
+    if real_conn.write_all(&bytes).is_err() {
+        tracing::warn!("proxy: failed to forward request");
+        false
+    } else {
+        true
     }
 }
 
+/// Relay the real-side response stream to the client, and validate every
+/// subsequent request on the client connection — not just the first. Podman's
+/// Go client keeps one connection alive across all its operations, so the
+/// create request that matters is often not the first one on the wire.
+fn stream_requests(
+    client_conn: &mut UnixStream,
+    real_conn: &mut UnixStream,
+    secrets: &[String],
+    allowed: &[SandboxMount],
+) {
+    let t2 = match relay_real_to_client(real_conn, client_conn) {
+        Some(t) => t,
+        None => return,
+    };
+
+    loop {
+        let (_buf, parsed, body) = match parse_request(client_conn) {
+            Ok(v) => v,
+            Err(msg) => {
+                tracing::debug!(error = msg, "proxy: keep-alive request parse failed");
+                break;
+            }
+        };
+        if check_mount_blocking(
+            client_conn,
+            &parsed.method,
+            &parsed.path,
+            &body,
+            secrets,
+            allowed,
+        ) {
+            break;
+        }
+        if !forward_on(real_conn, &parsed, &body) {
+            break;
+        }
+    }
+
+    let _ = real_conn.shutdown(Shutdown::Write);
+    if t2.join().is_err() {
+        tracing::warn!("proxy: real-to-client thread panicked");
+    }
+}
+
+fn canonicalize_allowed(allowed_mounts: Vec<SandboxMount>) -> Arc<Vec<SandboxMount>> {
+    Arc::new(
+        allowed_mounts
+            .into_iter()
+            .map(|m| SandboxMount {
+                host: canonical(&m.host),
+                read_only: m.read_only,
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
 /// Start a Unix socket proxy that intercepts container create requests
-/// and rejects those that would mount secret files.
+/// and rejects mounts that leak secrets or escape the sandbox surface.
 pub fn start_proxy(
     listen_path: &str,
     real_path: &str,
     secrets: Vec<String>,
+    allowed_mounts: Vec<SandboxMount>,
 ) -> Result<impl FnOnce()> {
     if let Some(parent) = Path::new(listen_path).parent() {
         std::fs::create_dir_all(parent).context("create proxy dir")?;
@@ -209,6 +253,7 @@ pub fn start_proxy(
     }
 
     let secrets = Arc::new(secrets);
+    let allowed = canonicalize_allowed(allowed_mounts);
     let real_path = real_path.to_string();
     let listen_path = listen_path.to_string();
     let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -224,9 +269,10 @@ pub fn start_proxy(
         match listener.accept() {
             Ok((stream, _)) => {
                 let secrets = Arc::clone(&secrets);
+                let allowed = Arc::clone(&allowed);
                 let real_path = real_path.clone();
                 thread::spawn(move || {
-                    proxy_handle(stream, &real_path, &secrets);
+                    proxy_handle(stream, &real_path, &secrets, &allowed);
                 });
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -248,66 +294,148 @@ pub fn start_proxy(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-
     use super::*;
 
     #[test]
-    fn test_write_response() {
+    fn test_validate_create_mounts_podman_casing() {
         let dir = tempfile::tempdir().unwrap();
-        let sock_path = dir.path().join("test.sock");
-        let listener = UnixListener::bind(&sock_path).unwrap();
+        let allowed_dir = dir.path().join("allowed");
+        let denied_dir = dir.path().join("denied");
+        std::fs::create_dir_all(&allowed_dir).unwrap();
+        std::fs::create_dir_all(&denied_dir).unwrap();
+        let allowed_path = allowed_dir.to_string_lossy().into_owned();
+        let denied_path = denied_dir.to_string_lossy().into_owned();
 
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            write_response(&mut stream, 403, "forbidden");
-        });
+        let secrets: Vec<String> = vec![];
+        let allowed = vec![SandboxMount {
+            host: allowed_path.clone(),
+            read_only: false,
+        }];
+        let podman_body = format!(
+            r#"{{"HostConfig":{{"Binds":["{denied_path}:/mnt/denied"],"Mounts":[{{"Type":"bind","Source":"{allowed_path}/file.txt","Target":"/mnt/allowed"}}]}}}}"#
+        );
+        std::fs::write(allowed_dir.join("file.txt"), b"x").unwrap();
 
-        let mut client = UnixStream::connect(&sock_path).unwrap();
-        handle.join().unwrap();
-
-        let mut response = String::new();
-        client.read_to_string(&mut response).unwrap();
-        assert!(response.contains("HTTP/1.1 403 Forbidden"));
-        assert!(response.contains("forbidden"));
+        let reason = validate_create_mounts(
+            "POST",
+            "/v5.4.0/libpod/containers/create",
+            podman_body.as_bytes(),
+            &secrets,
+            &allowed,
+        )
+        .expect("mounts must be detected");
+        assert!(
+            reason.contains(&format!("{denied_path}: outside the sandbox mounts")),
+            "unexpected reason: {reason}"
+        );
     }
 
     #[test]
-    fn test_write_response_502() {
+    fn test_validate_create_mounts_allows_authorized_bind() {
         let dir = tempfile::tempdir().unwrap();
-        let sock_path = dir.path().join("test.sock");
-        let listener = UnixListener::bind(&sock_path).unwrap();
+        let allowed_dir = dir.path().join("project");
+        std::fs::create_dir_all(&allowed_dir).unwrap();
+        let allowed_path = allowed_dir.to_string_lossy().into_owned();
 
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            write_response(&mut stream, 502, "bad gateway");
-        });
-
-        let mut client = UnixStream::connect(&sock_path).unwrap();
-        handle.join().unwrap();
-
-        let mut response = String::new();
-        client.read_to_string(&mut response).unwrap();
-        assert!(response.contains("HTTP/1.1 502 Bad Gateway"));
+        let secrets: Vec<String> = vec![];
+        let allowed = vec![SandboxMount {
+            host: allowed_path.clone(),
+            read_only: false,
+        }];
+        let body = format!(r#"{{"HostConfig":{{"Binds":["{allowed_path}:/mnt/project"]}}}}"#);
+        assert_eq!(
+            validate_create_mounts(
+                "POST",
+                "/containers/create",
+                body.as_bytes(),
+                &secrets,
+                &allowed
+            ),
+            None
+        );
     }
 
     #[test]
-    fn test_write_response_unknown() {
+    fn test_validate_create_mounts_libpod_specgen() {
         let dir = tempfile::tempdir().unwrap();
-        let sock_path = dir.path().join("test.sock");
-        let listener = UnixListener::bind(&sock_path).unwrap();
+        let allowed_dir = dir.path().join("allowed");
+        let denied_dir = dir.path().join("denied");
+        std::fs::create_dir_all(&allowed_dir).unwrap();
+        std::fs::create_dir_all(&denied_dir).unwrap();
+        let allowed_path = allowed_dir.to_string_lossy().into_owned();
+        let denied_path = denied_dir.to_string_lossy().into_owned();
 
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            write_response(&mut stream, 200, "ok");
-        });
+        let secrets: Vec<String> = vec![];
+        let allowed = vec![SandboxMount {
+            host: allowed_path.clone(),
+            read_only: false,
+        }];
+        // Real podman CLI specgen body: mounts live in the top-level "mounts"
+        // array with lowercase field names, not in HostConfig.
+        let body = format!(
+            r#"{{"name":"capx","image":"alpine","mounts":[{{"destination":"/mnt/denied","type":"bind","source":"{denied_path}"}},{{"destination":"/mnt/allowed","type":"bind","source":"{allowed_path}"}}]}}"#
+        );
 
-        let mut client = UnixStream::connect(&sock_path).unwrap();
-        handle.join().unwrap();
+        let reason = validate_create_mounts(
+            "POST",
+            "/v5.8.4/libpod/containers/create",
+            body.as_bytes(),
+            &secrets,
+            &allowed,
+        )
+        .expect("specgen mounts must be detected");
+        assert!(
+            reason.contains(&format!("{denied_path}: outside the sandbox mounts")),
+            "unexpected reason: {reason}"
+        );
+        assert!(
+            !reason.contains(&allowed_path),
+            "authorized mount must not be flagged: {reason}"
+        );
+    }
 
-        let mut response = String::new();
-        client.read_to_string(&mut response).unwrap();
-        assert!(response.contains("HTTP/1.1 200 Unknown"));
+    #[test]
+    fn test_validate_create_mounts_specgen_read_only_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let ro_dir = dir.path().join("ro");
+        std::fs::create_dir_all(&ro_dir).unwrap();
+        let ro_path = ro_dir.to_string_lossy().into_owned();
+
+        let secrets: Vec<String> = vec![];
+        let allowed = vec![SandboxMount {
+            host: ro_path.clone(),
+            read_only: true,
+        }];
+        // A ro bind of a read-only sandbox mount must pass; an rw bind must not.
+        let ro_body = format!(
+            r#"{{"image":"alpine","mounts":[{{"destination":"/mnt/x","type":"bind","source":"{ro_path}","options":["ro"]}}]}}"#
+        );
+        assert_eq!(
+            validate_create_mounts(
+                "POST",
+                "/v5.8.4/libpod/containers/create",
+                ro_body.as_bytes(),
+                &secrets,
+                &allowed
+            ),
+            None
+        );
+
+        let rw_body = format!(
+            r#"{{"image":"alpine","mounts":[{{"destination":"/mnt/x","type":"bind","source":"{ro_path}"}}]}}"#
+        );
+        let reason = validate_create_mounts(
+            "POST",
+            "/v5.8.4/libpod/containers/create",
+            rw_body.as_bytes(),
+            &secrets,
+            &allowed,
+        )
+        .expect("rw bind of a ro sandbox mount must be rejected");
+        assert!(
+            reason.contains(&format!("{ro_path}: sandbox mount is read-only")),
+            "unexpected reason: {reason}"
+        );
     }
 
     #[test]
@@ -319,6 +447,7 @@ mod tests {
         let stop = start_proxy(
             listen_path.to_str().unwrap(),
             real_path.to_str().unwrap(),
+            vec![],
             vec![],
         )
         .unwrap();

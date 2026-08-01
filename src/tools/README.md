@@ -4,7 +4,7 @@ Concerns managed in this module:
 
 - **`Tool` trait** — common interface for tools that run alongside the agent
 - **Tool registration & validation** — discover and verify compiled-in tools
-- **Podman proxy** — secret-aware Podman integration (feature-gated)
+- **Podman proxy** — sandbox-aware Podman integration (feature-gated)
 
 ## Files
 
@@ -14,6 +14,6 @@ Concerns managed in this module:
 
 ## Submodules
 
-  | Module                        | Concern                                  |
-  | ----------------------------- | ---------------------------------------- |
-  | [`podman/`](podman/README.md) | Podman socket proxy with secret blocking |
+  | Module                        | Concern                                           |
+  | ----------------------------- | ------------------------------------------------- |
+  | [`podman/`](podman/README.md) | Podman socket proxy with mount policy enforcement |

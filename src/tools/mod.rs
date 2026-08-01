@@ -4,6 +4,14 @@ pub mod podman;
 use anyhow::Result;
 
 use crate::capability_sources::CapabilitySource;
+use crate::sandbox::Mount;
+
+/// Context passed to tools when they start: the secrets to protect and the
+/// host paths the sandbox authorizes the agent to reach.
+pub struct ToolStartContext {
+    pub secret_files: Vec<String>,
+    pub sandbox_mounts: Vec<Mount>,
+}
 
 /// A pluggable tool that extends the sandbox with capabilities.
 ///
@@ -22,7 +30,7 @@ pub trait Tool: Send {
     fn capabilities(&self) -> Option<&dyn CapabilitySource>;
 
     /// Start the tool (e.g. launch a podman proxy) and return an optional shutdown hook.
-    fn start(&mut self, secret_files: &[String]) -> Result<Option<Box<dyn FnOnce()>>>;
+    fn start(&mut self, ctx: &ToolStartContext) -> Result<Option<Box<dyn FnOnce()>>>;
 }
 
 /// Return all tools compiled into this binary, configured from the tools config mapping.

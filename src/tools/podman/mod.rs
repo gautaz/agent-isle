@@ -2,7 +2,8 @@ mod http;
 mod parse;
 pub mod proxy;
 mod secret_detection;
-pub(crate) mod types;
+mod transport;
+pub mod types;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,8 +13,8 @@ use anyhow::Result;
 
 use crate::capability_sources::CapabilitySource;
 use crate::config::EnvValue;
-use crate::sandbox::Mount;
-use crate::tools::Tool;
+use crate::sandbox::{Mount, MountMode};
+use crate::tools::{Tool, ToolStartContext};
 use crate::util;
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -92,7 +93,7 @@ impl Tool for PodmanTool {
         }
     }
 
-    fn start(&mut self, secret_files: &[String]) -> Result<Option<Box<dyn FnOnce()>>> {
+    fn start(&mut self, ctx: &ToolStartContext) -> Result<Option<Box<dyn FnOnce()>>> {
         if !self.is_available() {
             tracing::debug!("podman not available");
             return Ok(None);
@@ -100,10 +101,20 @@ impl Tool for PodmanTool {
 
         let socket_path = self.podman_socket_path();
 
+        let allowed_mounts: Vec<types::SandboxMount> = ctx
+            .sandbox_mounts
+            .iter()
+            .map(|m| types::SandboxMount {
+                host: m.host.clone(),
+                read_only: m.mode == MountMode::Ro,
+            })
+            .collect();
+
         let stop = crate::tools::podman::proxy::start_proxy(
             &self.proxy_socket,
             &socket_path,
-            secret_files.to_vec(),
+            ctx.secret_files.clone(),
+            allowed_mounts,
         )?;
 
         tracing::info!(socket = %self.proxy_socket, "podman proxy started");
@@ -187,7 +198,12 @@ mod tests {
             serde_yml::from_str("socket_path: /tmp/nonexistent.sock").unwrap(),
             rundir,
         );
-        let result = tool.start(&[]).unwrap();
+        let result = tool
+            .start(&ToolStartContext {
+                secret_files: vec![],
+                sandbox_mounts: vec![],
+            })
+            .unwrap();
         assert!(result.is_none());
     }
 

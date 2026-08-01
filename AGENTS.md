@@ -107,11 +107,11 @@ src/
   sandbox/mod.rs                    Bubblewrap argument builder, Mount types
   secrets/mod.rs                    Secret detection via betterleaks
   tools/
-    mod.rs                          Tool trait, ToolContext, ToolSources, registry
+    mod.rs                          Tool trait, ToolStartContext, registry
     podman/
       mod.rs                        PodmanTool implementation
       http.rs                       HTTP parsing utilities
-      proxy.rs                      Podman socket proxy, secret interception, ProxySource
+      proxy.rs                      Podman socket proxy, mount policy enforcement, ProxySource
       secret_detection.rs           Secret file detection
       types.rs                      Podman JSON structs
   util/mod.rs                       Helpers, XDG dirs, socket validation, stale cleanup
@@ -129,8 +129,20 @@ example-config.yml                  Config reference (used by docs)
 
 - bubblewrap – filesystem sandbox
 - betterleaks – secret detection
-- Podman proxy – blocks secret-leaking mounts (pluggable tool)
+- Podman proxy – blocks secret-leaking and non-sandbox mounts (pluggable tool)
 - Lightweight mode: `--help`, `-h`, `--version`, `-v` skip full sandbox setup (minimal bwrap only, no betterleaks, no tools)
+
+#### Podman mount policy
+
+The podman proxy intercepts container create requests and rejects host bind mounts that violate the sandbox policy.
+A bind source is rejected when it:
+
+1. is or contains a known secret file
+2. lies outside the sandbox’s own host mounts (it must be a sandbox mount or a descendant of one)
+3. mounts a read-only sandbox tree read-write
+4. does not exist on the host (podman would otherwise create it)
+
+Sources are canonicalized (`realpath`) before matching so symlinks and `..` segments cannot bypass the checks.
 
 ### Tool plugins
 
@@ -141,9 +153,8 @@ Tools are registered in `tools::registered_tools()` and conditionally compiled v
 ```rust
 pub trait Tool: Send {
     fn id(&self) -> &str;
-    fn detect(&self, config: &serde_yml::Value) -> bool;
-    fn setup(&mut self, ctx: &ToolContext) -> Result<ToolSources>;
-    fn shutdown(&mut self);
+    fn capabilities(&self) -> Option<&dyn CapabilitySource>;
+    fn start(&mut self, ctx: &ToolStartContext) -> Result<Option<Box<dyn FnOnce()>>>;
 }
 ```
 
@@ -191,14 +202,14 @@ No separate `SecretSource` exists – masking is a platform capability applied a
 
 Secret detection is mount-aware via `SecretsPolicy`:
 
-1. Collect base mounts (platform, config, agent)
+1. Collect mounts from all sources (platform, agent, user profile, config, tool capabilities)
 2. Extract target paths from all `mask`-policy mounts
 3. Run betterleaks on those paths – detected secrets become masking mount candidates
-4. Set up tools (tools receive secret file paths via `ToolContext`)
-5. Collect tool-provided mounts
-6. Scan newly added `mask`-policy tool mounts for secrets
-7. Merge findings from base and tool scans (deduplicated)
-8. Append masking mounts last – `/dev/null` binds over detected secret files
+4. Start tools: each tool receives the secret file paths and the full non-secret mount list via `ToolStartContext` (the podman proxy builds its mount allowlist from this list)
+5. Append masking mounts last – `/dev/null` binds over detected secret files
+
+The mount list is complete before tools start: tool capability mounts are collected in step 1, and `Tool::start` returns only a shutdown hook, never new mounts.
+The masking mounts are deliberately excluded from the list passed to tools.
 
 `show`-policy mounts are never scanned and never masked.
 
