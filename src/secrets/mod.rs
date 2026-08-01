@@ -1,19 +1,7 @@
-use std::fs;
 use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-
-/// Read a newline-delimited file of secret file paths and return the paths.
-pub fn read_secret_paths(path: &str) -> Result<Vec<String>> {
-    let data =
-        fs::read_to_string(path).with_context(|| format!("read secret paths from {path}"))?;
-    Ok(data
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect())
-}
 
 #[derive(Deserialize)]
 struct BetterleaksFinding {
@@ -85,42 +73,6 @@ pub fn run_betterleaks_on_paths(paths: &[&str], tool_path: &str) -> Result<Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_read_secret_paths() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("secrets.txt");
-        fs::write(
-            &path,
-            "/home/user/.ssh/id_rsa\n/home/user/.env\n\n/home/user/.gnupg\n",
-        )
-        .unwrap();
-        let got = read_secret_paths(path.to_str().unwrap()).unwrap();
-        assert_eq!(
-            got,
-            vec![
-                "/home/user/.ssh/id_rsa",
-                "/home/user/.env",
-                "/home/user/.gnupg"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_read_secret_paths_empty() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("empty.txt");
-        fs::write(&path, "").unwrap();
-        let got = read_secret_paths(path.to_str().unwrap()).unwrap();
-        assert!(got.is_empty());
-    }
-
-    #[test]
-    fn test_read_secret_paths_missing() {
-        let result = read_secret_paths("/nonexistent/path");
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_run_betterleaks_bad_tool_path() {

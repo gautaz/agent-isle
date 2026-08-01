@@ -1,3 +1,4 @@
+#[cfg(feature = "podman")]
 pub mod podman;
 
 use anyhow::Result;
@@ -25,6 +26,7 @@ pub trait Tool: Send {
 }
 
 /// Return all tools compiled into this binary, configured from the tools config mapping.
+#[cfg_attr(not(feature = "podman"), allow(unused_mut, unused_variables))]
 pub fn registered_tools(tools_config: &serde_yml::Mapping, rundir: &str) -> Vec<Box<dyn Tool>> {
     let mut tools: Vec<Box<dyn Tool>> = Vec::new();
     #[cfg(feature = "podman")]

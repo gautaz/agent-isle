@@ -90,16 +90,6 @@ impl MountConfig {
         }
     }
 
-    /// Create a new read-only MountConfig with explicit target path.
-    pub fn with_target(path: impl Into<String>, target: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-            target: Some(target.into()),
-            mode: MountMode::Ro,
-            secrets_policy: SecretsPolicy::Mask,
-        }
-    }
-
     /// Convert to a sandbox Mount.
     pub fn to_mount(&self) -> Mount {
         let target = self.target.clone().unwrap_or_else(|| self.path.clone());

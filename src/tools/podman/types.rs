@@ -6,9 +6,6 @@ pub struct Mount {
     pub mount_type: String,
     #[serde(rename = "Source")]
     pub source: String,
-    #[allow(dead_code)]
-    #[serde(rename = "Target")]
-    pub target: String,
 }
 
 #[derive(Deserialize)]

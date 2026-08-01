@@ -91,17 +91,14 @@ mod tests {
             Mount {
                 mount_type: "bind".into(),
                 source: "/home/user/.env".into(),
-                target: "/app/.env".into(),
             },
             Mount {
                 mount_type: "bind".into(),
                 source: "/home/user/.ssh/id_rsa".into(),
-                target: "/app/.ssh".into(),
             },
             Mount {
                 mount_type: "volume".into(),
                 source: "".into(),
-                target: "/data".into(),
             },
         ];
         let result = find_secret_mounts(&mounts, &secrets);
@@ -116,7 +113,6 @@ mod tests {
         let mounts = vec![Mount {
             mount_type: "volume".into(),
             source: "".into(),
-            target: "/data".into(),
         }];
         assert_eq!(find_secret_mounts(&mounts, &secrets), Vec::<String>::new());
     }

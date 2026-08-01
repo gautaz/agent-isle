@@ -1,6 +1,11 @@
+#![cfg(feature = "podman")]
+
+mod support;
+
 use std::io::{Read, Write};
 
-use agent_isle::tools::podman::proxy::{mock_podman_backend, read_response, start_proxy};
+use agent_isle::tools::podman::proxy::start_proxy;
+use support::{mock_podman_backend, read_response};
 
 #[test]
 fn test_start_proxy_rejects_secret_mount() {
