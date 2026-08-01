@@ -6,15 +6,14 @@ use indoc::indoc;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
-const MOCK_BL_BIN: &str = r#"#!/bin/sh
-for a; do d="$a"; done
+const MOCK_BL_BIN: &str = r#"for a; do d="$a"; done
 [ -d "$d" ] || { echo '[]'; exit 0; }
 find "$d" -name ".env" -exec printf '{"File":"%s"}\n' {} + 2>/dev/null | paste -sd, | sed 's/^/[/; s/$/]/'
 "#;
 
 fn mock_betterleaks(dir: &Path) -> PathBuf {
     let path = dir.join("bl-mock");
-    std::fs::write(&path, MOCK_BL_BIN).unwrap();
+    std::fs::write(&path, format!("#!{}\n{MOCK_BL_BIN}", sh_path())).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     path
 }
@@ -149,6 +148,24 @@ fn bwrap_path() -> Option<String> {
     }
 }
 
+fn is_bwrap_sandbox() -> bool {
+    let root_src = std::fs::read_to_string("/proc/self/mountinfo")
+        .ok()
+        .and_then(|info| {
+            info.lines()
+                .find(|line| line.split_whitespace().nth(4) == Some("/"))
+                .and_then(|line| line.split_whitespace().nth(3).map(str::to_string))
+        });
+    let is_bwrap_root = matches!(root_src.as_deref(), Some("/newroot" | "/oldroot"));
+    if !is_bwrap_root {
+        return false;
+    }
+    let is_userns = std::fs::read_to_string("/proc/self/uid_map")
+        .map(|s| s.trim() != "0 4294967295 4294967295")
+        .unwrap_or(false);
+    is_bwrap_root && is_userns
+}
+
 #[test]
 fn test_sandbox_masks_secret_files() {
     let bwrap = match bwrap_path() {
@@ -158,6 +175,10 @@ fn test_sandbox_masks_secret_files() {
             return;
         }
     };
+    if is_bwrap_sandbox() {
+        eprintln!("skipping: nested bwrap sandbox not supported");
+        return;
+    }
 
     let tmp = TempDir::new().unwrap();
     let mnt = TempDir::new().unwrap();
@@ -202,6 +223,10 @@ fn test_sandbox_post_start_gap() {
             return;
         }
     };
+    if is_bwrap_sandbox() {
+        eprintln!("skipping: nested bwrap sandbox not supported");
+        return;
+    }
 
     let tmp = TempDir::new().unwrap();
     let mnt = TempDir::new().unwrap();
@@ -237,6 +262,10 @@ fn test_sandbox_deletion_recreation_gap() {
             return;
         }
     };
+    if is_bwrap_sandbox() {
+        eprintln!("skipping: nested bwrap sandbox not supported");
+        return;
+    }
 
     let tmp = TempDir::new().unwrap();
     let mnt = TempDir::new().unwrap();

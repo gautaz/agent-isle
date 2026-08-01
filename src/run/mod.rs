@@ -240,7 +240,8 @@ mod tests {
     fn mock_betterleaks() -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("betterleaks");
-        std::fs::write(&script, "#!/bin/sh\necho '[]'").unwrap();
+        let shell = which_bin("sh");
+        std::fs::write(&script, format!("#!{shell}\necho '[]'")).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -251,17 +252,20 @@ mod tests {
 
     fn which_bin(name: &str) -> String {
         for shell in &["sh", "/bin/sh"] {
-            if let Ok(o) = std::process::Command::new(shell)
+            let o = match std::process::Command::new(shell)
                 .args(["-c", &format!("command -v {name}")])
                 .output()
             {
-                if o.status.success() {
-                    if let Ok(path) = String::from_utf8(o.stdout) {
-                        let path = path.trim().to_string();
-                        if !path.is_empty() {
-                            return path;
-                        }
-                    }
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            if !o.status.success() {
+                continue;
+            }
+            if let Ok(path) = String::from_utf8(o.stdout) {
+                let path = path.trim().to_string();
+                if !path.is_empty() {
+                    return path;
                 }
             }
         }
