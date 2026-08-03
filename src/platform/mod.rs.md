@@ -4,7 +4,7 @@ Defines the `OSConfig` trait that each operating system implements to provide ba
 Ships with two implementations:
 
 - `Linux` — generic Linux (mounts `/usr/lib`, `/lib`, etc.)
-- `NixOS` — NixOS-specific (mounts `/nix/store`)
+- `NixOS` — NixOS-specific (mounts `/nix/store`, `/usr/bin`)
 
 `PlatformSource` wraps an `OSConfig` as a `CapabilitySource`.
 The `detect()` function selects the correct implementation at runtime.

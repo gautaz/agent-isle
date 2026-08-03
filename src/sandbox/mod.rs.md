@@ -7,4 +7,4 @@ Defines the core sandbox types:
 - `Mount` — a bind mount with host path, target path, mode, and secrets policy
 
 The `build_args()` function constructs the full `bwrap` CLI argument vector (proc, dev, tmpfs, chdir, bind mounts, environment variables).
-The `build_minimal_args()` variant is used for lightweight (no-sandbox) mode.
+The `build_minimal_args()` variant is used for lightweight (no-sandbox) mode; both skip host paths that do not exist.

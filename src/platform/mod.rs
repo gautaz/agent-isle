@@ -84,7 +84,10 @@ pub struct NixOS;
 
 impl OSConfig for NixOS {
     fn platform_mounts(&self) -> Vec<Mount> {
-        vec![Mount::ro("/nix/store", "/nix/store").secrets_policy(SecretsPolicy::Show)]
+        vec![
+            Mount::ro("/usr/bin", "/usr/bin").secrets_policy(SecretsPolicy::Show),
+            Mount::ro("/nix/store", "/nix/store").secrets_policy(SecretsPolicy::Show),
+        ]
     }
 
     fn platform_env(&self) -> HashMap<String, String> {
@@ -96,7 +99,7 @@ impl OSConfig for NixOS {
     }
 
     fn minimal_ro_mounts(&self) -> Vec<String> {
-        vec!["/nix/store".to_string()]
+        vec!["/nix/store".to_string(), "/usr/bin".to_string()]
     }
 }
 

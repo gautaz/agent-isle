@@ -128,7 +128,11 @@ pub fn build_minimal_args(os_cfg: &dyn OSConfig) -> Vec<String> {
     ];
 
     for p in os_cfg.minimal_ro_mounts() {
-        args.extend_from_slice(&["--ro-bind".into(), p]);
+        if Path::new(&p).exists() {
+            args.extend_from_slice(&["--ro-bind".into(), p]);
+        } else {
+            tracing::warn!(path = %p, "mount path does not exist on host, skipping");
+        }
     }
 
     args
@@ -281,5 +285,31 @@ mod tests {
         assert!(args.contains(&"--proc".to_string()));
         assert!(args.contains(&"--dev".to_string()));
         assert!(args.contains(&"--tmpfs".to_string()));
+    }
+
+    struct MinimalWithMissing {
+        paths: Vec<String>,
+    }
+
+    impl platform::OSConfig for MinimalWithMissing {
+        fn platform_env(&self) -> std::collections::HashMap<String, String> {
+            std::collections::HashMap::new()
+        }
+
+        fn minimal_ro_mounts(&self) -> Vec<String> {
+            self.paths.clone()
+        }
+    }
+
+    #[test]
+    fn test_build_minimal_args_filters_nonexistent_paths() {
+        let os_cfg = MinimalWithMissing {
+            paths: vec!["/nonexistent/minimal/path".to_string()],
+        };
+        let args = build_minimal_args(&os_cfg);
+        assert!(
+            !args.windows(2).any(|w| w[1] == "/nonexistent/minimal/path"),
+            "non-existent minimal mount should be excluded"
+        );
     }
 }
