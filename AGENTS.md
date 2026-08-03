@@ -16,6 +16,11 @@ Do not run `nix` commands directly — you do not have the permissions required.
 
 All development commands (`cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`, `panache format`) must be run after sourcing the environment script.
 If you start a new shell session during work, re-source the script.
+If your environment does not persist variables between tool invocations (e.g. each command runs in a fresh shell), source the script and run the command in the same invocation, e.g.:
+
+```bash
+source scripts/ai-dev-env.sh && scripts/build-docs.sh
+```
 
 ### Constraints
 
