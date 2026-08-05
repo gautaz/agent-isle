@@ -190,9 +190,8 @@ pub(crate) fn run_cmd_bare(
     os_cfg: &dyn platform::OSConfig,
     args: &[String],
 ) -> i32 {
-    let mut bwrap_args = sandbox::build_minimal_args(os_cfg);
-    bwrap_args.push(agent.binary.clone());
-    bwrap_args.extend(args.iter().cloned());
+    let bwrap_args =
+        sandbox::build_minimal_args(os_cfg).exec(agent.binary.clone(), args.iter().cloned());
 
     let status = process::Command::new(bwrap_path)
         .args(&bwrap_args)

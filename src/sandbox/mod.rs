@@ -6,6 +6,10 @@ use serde::Deserialize;
 use crate::config::EnvValue;
 use crate::platform::OSConfig;
 
+mod args;
+
+pub use args::{BwrapArg, SandboxArgs};
+
 /// Whether a mount is read-only or read-write inside the sandbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,28 +80,20 @@ pub struct BuildArgs<'a> {
 /// config mounts, agent mounts, secret mounts, tool mounts, etc.) into the
 /// `mounts` and `env` parameters. The sandbox module only emits bwrap boilerplate
 /// and iterates over what it receives.
-pub fn build_args(params: BuildArgs) -> Vec<String> {
-    let mut args: Vec<String> = Vec::new();
-
-    args.extend_from_slice(&[
-        "--proc".into(),
-        "/proc".into(),
-        "--dev".into(),
-        "/dev".into(),
-        "--tmpfs".into(),
-        "/tmp".into(),
-        "--chdir".into(),
-        params.chdir.into(),
-    ]);
+pub fn build_args(params: BuildArgs) -> SandboxArgs {
+    let mut args = SandboxArgs::new()
+        .proc()
+        .dev()
+        .tmpfs("/tmp")
+        .chdir(params.chdir);
 
     // Emit bwrap bind flags, filtering out paths that don't exist
     for m in params.mounts {
         if Path::new(&m.host).exists() {
-            let flag = match m.mode {
-                MountMode::Ro => "--ro-bind",
-                MountMode::Rw => "--bind",
+            args = match m.mode {
+                MountMode::Ro => args.ro_bind(&m.host, &m.target),
+                MountMode::Rw => args.bind(&m.host, &m.target),
             };
-            args.extend_from_slice(&[flag.into(), m.host.clone(), m.target.clone()]);
         } else {
             tracing::warn!(path = %m.host, "mount path does not exist on host, skipping");
         }
@@ -106,7 +102,7 @@ pub fn build_args(params: BuildArgs) -> Vec<String> {
     // Top-level environment variables
     for (k, v) in params.env {
         if let Ok(resolved) = v.resolve() {
-            args.extend_from_slice(&["--setenv".into(), k.clone(), resolved]);
+            args = args.setenv(k, &resolved);
         } else {
             tracing::warn!(key = %k, "failed to resolve env var, skipping");
         }
@@ -117,19 +113,12 @@ pub fn build_args(params: BuildArgs) -> Vec<String> {
 
 /// build_minimal_args constructs minimal bubblewrap arguments for lightweight
 /// operations like --help and --version.
-pub fn build_minimal_args(os_cfg: &dyn OSConfig) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "--proc".into(),
-        "/proc".into(),
-        "--dev".into(),
-        "/dev".into(),
-        "--tmpfs".into(),
-        "/tmp".into(),
-    ];
+pub fn build_minimal_args(os_cfg: &dyn OSConfig) -> SandboxArgs {
+    let mut args = SandboxArgs::new().proc().dev().tmpfs("/tmp");
 
     for p in os_cfg.minimal_ro_mounts() {
         if Path::new(&p).exists() {
-            args.extend_from_slice(&["--ro-bind".into(), p]);
+            args = args.ro_bind(&p, &p);
         } else {
             tracing::warn!(path = %p, "mount path does not exist on host, skipping");
         }
@@ -149,7 +138,8 @@ mod tests {
             mounts: &[],
             env: &std::collections::HashMap::new(),
             chdir: "/project",
-        });
+        })
+        .into_flags();
 
         assert!(args.contains(&"--proc".to_string()));
         assert!(args.contains(&"--dev".to_string()));
@@ -175,7 +165,8 @@ mod tests {
             mounts: &secret_mounts,
             env: &std::collections::HashMap::new(),
             chdir: "/project",
-        });
+        })
+        .into_flags();
 
         let dev_null_count = args
             .windows(2)
@@ -196,7 +187,8 @@ mod tests {
             mounts: &[Mount::rw(proxy_sock.to_str().unwrap(), &target)],
             env: &std::collections::HashMap::new(),
             chdir: "/project",
-        });
+        })
+        .into_flags();
 
         let found = args.windows(3).any(|w| {
             w[0] == "--bind" && w[1] == proxy_sock.to_str().unwrap() && w[2] == target.as_str()
@@ -222,7 +214,8 @@ mod tests {
             mounts: &mounts,
             env: &std::collections::HashMap::new(),
             chdir: "/tmp/test",
-        });
+        })
+        .into_flags();
 
         assert!(
             args.windows(3)
@@ -245,7 +238,8 @@ mod tests {
             ],
             env: &std::collections::HashMap::new(),
             chdir: "/tmp/test",
-        });
+        })
+        .into_flags();
 
         assert!(
             !args.windows(2).any(|w| w[1] == "/nonexistent/top/ro"),
@@ -269,7 +263,8 @@ mod tests {
             mounts: &[],
             env: &env,
             chdir: "/tmp/test",
-        });
+        })
+        .into_flags();
 
         let env_idx = args
             .windows(3)
@@ -280,7 +275,7 @@ mod tests {
     #[test]
     fn test_build_minimal_args() {
         let os_cfg = platform::detect();
-        let args = build_minimal_args(os_cfg.as_ref());
+        let args = build_minimal_args(os_cfg.as_ref()).into_flags();
         assert!(!args.is_empty());
         assert!(args.contains(&"--proc".to_string()));
         assert!(args.contains(&"--dev".to_string()));
@@ -306,10 +301,37 @@ mod tests {
         let os_cfg = MinimalWithMissing {
             paths: vec!["/nonexistent/minimal/path".to_string()],
         };
-        let args = build_minimal_args(&os_cfg);
+        let args = build_minimal_args(&os_cfg).into_flags();
         assert!(
             !args.windows(2).any(|w| w[1] == "/nonexistent/minimal/path"),
             "non-existent minimal mount should be excluded"
         );
+    }
+
+    #[test]
+    fn test_build_minimal_args_golden_arity() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let a_path = a.path().to_string_lossy().to_string();
+        let b_path = b.path().to_string_lossy().to_string();
+        let os_cfg = MinimalWithMissing {
+            paths: vec![a_path.clone(), b_path.clone()],
+        };
+        let args = build_minimal_args(&os_cfg).into_flags();
+        let expected: Vec<String> = vec![
+            "--proc".into(),
+            "/proc".into(),
+            "--dev".into(),
+            "/dev".into(),
+            "--tmpfs".into(),
+            "/tmp".into(),
+            "--ro-bind".into(),
+            a_path.clone(),
+            a_path.clone(),
+            "--ro-bind".into(),
+            b_path.clone(),
+            b_path.clone(),
+        ];
+        assert_eq!(args, expected);
     }
 }

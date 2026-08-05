@@ -11,9 +11,35 @@ const MOCK_BL_BIN: &str = r#"for a; do d="$a"; done
 find "$d" -name ".env" -exec printf '{"File":"%s"}\n' {} + 2>/dev/null | paste -sd, | sed 's/^/[/; s/$/]/'
 "#;
 
+/// Mock bwrap that parses its options the way real bubblewrap does
+/// (each option consumes a fixed number of following args, regardless of
+/// leading dashes) and reports which "program" it would exec inside the sandbox.
+const MOCK_BWRAP_BIN: &str = r#"skip=0
+for a in "$@"; do
+  if [ "$skip" -gt 0 ]; then
+    skip=$((skip - 1))
+    continue
+  fi
+  case "$a" in
+    --proc|--dev|--tmpfs|--chdir) skip=1 ;;
+    --ro-bind|--bind|--setenv) skip=2 ;;
+    --*) ;;
+    *) printf 'program=%s\n' "$a"; exit 0 ;;
+  esac
+done
+printf 'program=\n'
+"#;
+
 fn mock_betterleaks(dir: &Path) -> PathBuf {
     let path = dir.join("bl-mock");
     std::fs::write(&path, format!("#!{}\n{MOCK_BL_BIN}", sh_path())).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+fn mock_bwrap(dir: &Path) -> PathBuf {
+    let path = dir.join("bwrap-mock");
+    std::fs::write(&path, format!("#!{}\n{MOCK_BWRAP_BIN}", sh_path())).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     path
 }
@@ -302,4 +328,41 @@ fn test_sandbox_deletion_recreation_gap() {
         !stderr.contains("OLD_KEY"),
         "old secret leaked in stderr:\n{stderr}"
     );
+}
+
+/// Lightweight mode (`--version`) must emit well-formed bwrap options: every
+/// `--ro-bind` must be followed by both SRC and DEST, so bwrap execs the agent
+/// binary rather than a misaligned mount path. The mock bwrap reports which
+/// program a real bwrap would try to exec.
+#[test]
+fn test_lightweight_version_execs_agent_binary() {
+    let tmp = TempDir::new().unwrap();
+    let bwrap = mock_bwrap(tmp.path());
+
+    let config_path = tmp.path().join("config.yml");
+    std::fs::write(
+        &config_path,
+        format!(
+            indoc! {r#"
+                agent: opencode
+                bwrap_path: {}
+                betterleaks_path: {}
+                agents:
+                  opencode:
+                    binary: /bin/sh
+                    lightweight_args:
+                      - --version
+            "#},
+            bwrap.display(),
+            sh_path(),
+        ),
+    )
+    .unwrap();
+
+    Command::cargo_bin("agent-isle")
+        .unwrap()
+        .args(["--config", config_path.to_str().unwrap(), "--", "--version"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("program=/bin/sh"));
 }

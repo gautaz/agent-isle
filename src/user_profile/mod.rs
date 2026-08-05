@@ -247,7 +247,8 @@ mod tests {
             mounts: &mounts,
             env: &std::collections::HashMap::new(),
             chdir: "/tmp",
-        });
+        })
+        .into_flags();
         assert!(
             !args.windows(2).any(|w| w[1] == "/nonexistent/a"),
             "non-existent PATH dir should be filtered by build_args"

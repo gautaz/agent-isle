@@ -77,7 +77,8 @@ fn test_sandbox_build_args_masks_secrets() {
         mounts: &secret_mounts,
         env: &HashMap::new(),
         chdir: "/tmp/test",
-    });
+    })
+    .into_flags();
 
     let mask_idx = args
         .windows(3)
@@ -101,7 +102,8 @@ fn test_sandbox_build_args_podman_proxy_bind() {
         )],
         env: &HashMap::new(),
         chdir: "/tmp/test",
-    });
+    })
+    .into_flags();
 
     let bind_idx = args.windows(3).position(|w| {
         w[0] == "--bind" && w[1] == proxy_sock.to_str().unwrap() && w[2] == "/tmp/podman-proxy.sock"
@@ -121,7 +123,8 @@ fn test_sandbox_build_args_env() {
         mounts: &[],
         env: &env,
         chdir: "/tmp/test",
-    });
+    })
+    .into_flags();
 
     let env_idx = args
         .windows(3)
@@ -147,7 +150,8 @@ fn test_sandbox_build_args_agent_mounts() {
         mounts: &mounts,
         env: &HashMap::new(),
         chdir: "/tmp/test",
-    });
+    })
+    .into_flags();
 
     assert!(
         args.windows(3)
@@ -170,7 +174,8 @@ fn test_sandbox_build_args_skips_nonexistent_paths() {
         ],
         env: &HashMap::new(),
         chdir: "/tmp/test",
-    });
+    })
+    .into_flags();
 
     assert!(
         !args.windows(2).any(|w| w[1] == "/nonexistent/top/ro"),
@@ -194,7 +199,8 @@ fn test_sandbox_build_args_agent_env() {
         mounts: &[],
         env: &env,
         chdir: "/tmp/test",
-    });
+    })
+    .into_flags();
 
     let env_idx = args
         .windows(3)

@@ -16,13 +16,12 @@ pub(crate) struct LaunchConfig<'a> {
 }
 
 pub(crate) fn launch_sandbox(params: LaunchConfig<'_>) -> i32 {
-    let mut bwrap_args = sandbox::build_args(sandbox::BuildArgs {
+    let bwrap_args = sandbox::build_args(sandbox::BuildArgs {
         mounts: params.mounts,
         env: params.env,
         chdir: params.chdir,
-    });
-    bwrap_args.push(params.agent_binary);
-    bwrap_args.extend(params.agent_args.iter().cloned());
+    })
+    .exec(params.agent_binary, params.agent_args.iter().cloned());
     if params.dry_run {
         println!("{} {}", params.bwrap_path, bwrap_args.join(" "));
         return 0;
